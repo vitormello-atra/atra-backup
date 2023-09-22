@@ -1,14 +1,17 @@
 import { useRef, useState } from "react";
-import { Checkbox, ChoiceGroup, IChoiceGroupOption, Panel, DefaultButton, Spinner, TextField, SpinButton, IDropdownOption, Dropdown } from "@fluentui/react";
+import { Checkbox, ChoiceGroup, IChoiceGroupOption, Panel, DefaultButton, Spinner, TextField, SpinButton, IDropdownOption, Dropdown} from "@fluentui/react";
 
 import styles from "./OneShot.module.css";
 
-import { askApi, Approaches, AskResponse, AskRequest, RetrievalMode } from "../../api";
+import { askApi, Approaches, AskResponse, AskRequest, RetrievalMode, getSpeechApi } from "../../api";
+
 import { Answer, AnswerError } from "../../components/Answer";
 import { QuestionInput } from "../../components/QuestionInput";
 import { ExampleList } from "../../components/Example";
 import { AnalysisPanel, AnalysisPanelTabs } from "../../components/AnalysisPanel";
 import { SettingsButton } from "../../components/SettingsButton/SettingsButton";
+
+var audio = new Audio();
 
 export function Component(): JSX.Element {
     const [isConfigPanelOpen, setIsConfigPanelOpen] = useState(false);
@@ -21,15 +24,17 @@ export function Component(): JSX.Element {
     const [useSemanticRanker, setUseSemanticRanker] = useState<boolean>(true);
     const [useSemanticCaptions, setUseSemanticCaptions] = useState<boolean>(false);
     const [excludeCategory, setExcludeCategory] = useState<string>("");
+    const [useAutoSpeakAnswers, setUseAutoSpeakAnswers] = useState<boolean>(true);
 
     const lastQuestionRef = useRef<string>("");
 
     const [isLoading, setIsLoading] = useState<boolean>(false);
     const [error, setError] = useState<unknown>();
-    const [answer, setAnswer] = useState<AskResponse>();
+    const [answer, setAnswer] = useState<[AskResponse, string | null]>();
 
     const [activeCitation, setActiveCitation] = useState<string>();
     const [activeAnalysisPanelTab, setActiveAnalysisPanelTab] = useState<AnalysisPanelTabs | undefined>(undefined);
+    const [isSpeaking, setIsSpeaking] = useState<boolean>(false);
 
     const makeApiRequest = async (question: string) => {
         lastQuestionRef.current = question;
@@ -51,11 +56,18 @@ export function Component(): JSX.Element {
                     top: retrieveCount,
                     retrievalMode: retrievalMode,
                     semanticRanker: useSemanticRanker,
-                    semanticCaptions: useSemanticCaptions
+                    semanticCaptions: useSemanticCaptions,
+                    autoSpeakAnswers: useAutoSpeakAnswers
                 }
             };
             const result = await askApi(request);
-            setAnswer(result);
+            setAnswer([result, null]);
+            setIsLoading(false);
+            const speechUrl = await getSpeechApi(result.answer);
+            setAnswer([result, speechUrl]);
+            if(useAutoSpeakAnswers) {
+                startSynthesis(speechUrl);
+            }
         } catch (e) {
             setError(e);
         } finally {
@@ -95,6 +107,10 @@ export function Component(): JSX.Element {
         setUseSemanticCaptions(!!checked);
     };
 
+    const onEnableAutoSpeakAnswersChange = (_ev?: React.FormEvent<HTMLElement | HTMLInputElement>, checked?: boolean) => {
+        setUseAutoSpeakAnswers(!!checked);
+    };
+
     const onExcludeCategoryChanged = (_ev?: React.FormEvent, newValue?: string) => {
         setExcludeCategory(newValue || "");
     };
@@ -118,6 +134,29 @@ export function Component(): JSX.Element {
         } else {
             setActiveAnalysisPanelTab(tab);
         }
+    };
+
+    const startSynthesis = (url: string | null) => {
+        if(isSpeaking) {
+            audio.pause();
+            setIsSpeaking(false);
+        }
+
+        if(url === null) {
+            return;
+        }
+
+        audio = new Audio(url);
+        audio.play();
+        setIsSpeaking(true);
+        audio.addEventListener('ended', () => {
+            setIsSpeaking(false);
+        });
+    };
+
+    const stopSynthesis = () => {
+        audio.pause();
+        setIsSpeaking(false);
     };
 
     const approaches: IChoiceGroupOption[] = [
@@ -154,11 +193,13 @@ export function Component(): JSX.Element {
                 {!isLoading && answer && !error && (
                     <div className={styles.oneshotAnswerContainer}>
                         <Answer
-                            answer={answer}
+                            answer={answer[0]}
                             isStreaming={false}
+                            isSpeaking = {isSpeaking}
                             onCitationClicked={x => onShowCitation(x)}
                             onThoughtProcessClicked={() => onToggleTab(AnalysisPanelTabs.ThoughtProcessTab)}
                             onSupportingContentClicked={() => onToggleTab(AnalysisPanelTabs.SupportingContentTab)}
+                            onSpeechSynthesisClicked={() => isSpeaking? stopSynthesis(): startSynthesis(answer[1])}
                         />
                     </div>
                 )}
@@ -173,7 +214,7 @@ export function Component(): JSX.Element {
                         activeCitation={activeCitation}
                         onActiveTabChanged={x => onToggleTab(x)}
                         citationHeight="600px"
-                        answer={answer}
+                        answer={answer[0]}
                         activeTab={activeAnalysisPanelTab}
                     />
                 )}
@@ -249,6 +290,12 @@ export function Component(): JSX.Element {
                     label="Use query-contextual summaries instead of whole documents"
                     onChange={onUseSemanticCaptionsChange}
                     disabled={!useSemanticRanker}
+                />
+                <Checkbox
+                    className={styles.oneshotSettingsSeparator}
+                    checked={useAutoSpeakAnswers}
+                    label="Automatically speak answers"
+                    onChange={onEnableAutoSpeakAnswersChange}
                 />
                 <Dropdown
                     className={styles.oneshotSettingsSeparator}

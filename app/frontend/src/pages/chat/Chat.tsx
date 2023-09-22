@@ -5,7 +5,7 @@ import readNDJSONStream from "ndjson-readablestream";
 
 import styles from "./Chat.module.css";
 
-import { chatApi, RetrievalMode, Approaches, AskResponse, ChatRequest, ChatTurn } from "../../api";
+import { chatApi, RetrievalMode, Approaches, AskResponse, ChatRequest, ChatTurn, getSpeechApi } from "../../api";
 import { Answer, AnswerError, AnswerLoading } from "../../components/Answer";
 import { QuestionInput } from "../../components/QuestionInput";
 import { ExampleList } from "../../components/Example";
@@ -13,6 +13,8 @@ import { UserChatMessage } from "../../components/UserChatMessage";
 import { AnalysisPanel, AnalysisPanelTabs } from "../../components/AnalysisPanel";
 import { SettingsButton } from "../../components/SettingsButton";
 import { ClearChatButton } from "../../components/ClearChatButton";
+
+var audio = new Audio();
 
 const Chat = () => {
     const [isConfigPanelOpen, setIsConfigPanelOpen] = useState(false);
@@ -24,6 +26,7 @@ const Chat = () => {
     const [useSemanticCaptions, setUseSemanticCaptions] = useState<boolean>(false);
     const [excludeCategory, setExcludeCategory] = useState<string>("");
     const [useSuggestFollowupQuestions, setUseSuggestFollowupQuestions] = useState<boolean>(false);
+    const [useAutoSpeakAnswers, setUseAutoSpeakAnswers] = useState<boolean>(true);
 
     const lastQuestionRef = useRef<string>("");
     const chatMessageStreamEnd = useRef<HTMLDivElement | null>(null);
@@ -36,10 +39,12 @@ const Chat = () => {
     const [activeAnalysisPanelTab, setActiveAnalysisPanelTab] = useState<AnalysisPanelTabs | undefined>(undefined);
 
     const [selectedAnswer, setSelectedAnswer] = useState<number>(0);
-    const [answers, setAnswers] = useState<[user: string, response: AskResponse][]>([]);
-    const [streamedAnswers, setstreamedAnswers] = useState<[user: string, response: AskResponse][]>([]);
 
-    const handleAsyncRequest = async (question: string, answers: [string, AskResponse][], setAnswers: Function, responseBody: ReadableStream<any>) => {
+    const [answers, setAnswers] = useState<[user: string, response: AskResponse, speechUrl: string | null][]>([]);
+    const [runningIndex, setRunningIndex] = useState<number>(-1);
+    const [streamedAnswers, setstreamedAnswers] = useState<[user: string, response: AskResponse, speechUrl: string | null][]>([]);
+
+    const handleAsyncRequest = async (question: string, answers: [string, AskResponse, string | null][], setAnswers: Function, responseBody: ReadableStream<any>) => {
         let answer: string = "";
         let askResponse: AskResponse = {} as AskResponse;
 
@@ -48,7 +53,7 @@ const Chat = () => {
                 setTimeout(() => {
                     answer += newContent;
                     const latestResponse: AskResponse = { ...askResponse, answer };
-                    setstreamedAnswers([...answers, [question, latestResponse]]);
+                    setstreamedAnswers([...answers, [question, latestResponse, null]]);
                     resolve(null);
                 }, 33);
             });
@@ -91,23 +96,33 @@ const Chat = () => {
                     retrievalMode: retrievalMode,
                     semanticRanker: useSemanticRanker,
                     semanticCaptions: useSemanticCaptions,
-                    suggestFollowupQuestions: useSuggestFollowupQuestions
+                    suggestFollowupQuestions: useSuggestFollowupQuestions,
+                    autoSpeakAnswers: useAutoSpeakAnswers
                 }
             };
 
             const response = await chatApi(request);
+            let speechUrl = null;
             if (!response.body) {
                 throw Error("No response body");
             }
+
+            var parsedResponse: AskResponse = {} as AskResponse;
             if (shouldStream) {
-                const parsedResponse: AskResponse = await handleAsyncRequest(question, answers, setAnswers, response.body);
-                setAnswers([...answers, [question, parsedResponse]]);
+                parsedResponse = await handleAsyncRequest(question, answers, setAnswers, response.body);
             } else {
-                const parsedResponse: AskResponse = await response.json();
+                parsedResponse = await response.json();
                 if (response.status > 299 || !response.ok) {
                     throw Error(parsedResponse.error || "Unknown error");
                 }
-                setAnswers([...answers, [question, parsedResponse]]);
+                setAnswers([...answers, [question, parsedResponse, null]]);
+                setIsLoading(false);
+            }
+            
+            speechUrl = await getSpeechApi(parsedResponse.answer);
+            setAnswers([...answers, [question, parsedResponse, speechUrl]]);
+            if(useAutoSpeakAnswers){
+                startOrStopSynthesis(speechUrl, answers.length);
             }
         } catch (e) {
             setError(e);
@@ -159,6 +174,10 @@ const Chat = () => {
         setUseSuggestFollowupQuestions(!!checked);
     };
 
+    const onEnableAutoSpeakAnswersChange = (_ev?: React.FormEvent<HTMLElement | HTMLInputElement>, checked?: boolean) => {
+        setUseAutoSpeakAnswers(!!checked);
+    };
+
     const onExampleClicked = (example: string) => {
         makeApiRequest(example);
     };
@@ -172,6 +191,30 @@ const Chat = () => {
         }
 
         setSelectedAnswer(index);
+    };
+
+    const startOrStopSynthesis = async (url: string | null, index: number) => {
+        if(runningIndex === index) {
+            audio.pause();
+            setRunningIndex(-1);
+            return;
+        }
+
+        if(runningIndex !== -1) {
+            audio.pause();
+            setRunningIndex(-1);
+        }
+
+        if (!url) {
+            return;
+        }
+
+        audio = new Audio(url);
+        await audio.play();
+        audio.addEventListener('ended', () => {
+            setRunningIndex(-1);
+        });
+        setRunningIndex(index);
     };
 
     const onToggleTab = (tab: AnalysisPanelTabs, index: number) => {
@@ -210,10 +253,12 @@ const Chat = () => {
                                                 isStreaming={true}
                                                 key={index}
                                                 answer={streamedAnswer[1]}
+                                                isSpeaking = {runningIndex === index}
                                                 isSelected={false}
                                                 onCitationClicked={c => onShowCitation(c, index)}
                                                 onThoughtProcessClicked={() => onToggleTab(AnalysisPanelTabs.ThoughtProcessTab, index)}
                                                 onSupportingContentClicked={() => onToggleTab(AnalysisPanelTabs.SupportingContentTab, index)}
+                                                onSpeechSynthesisClicked={() => startOrStopSynthesis(streamedAnswer[2], index)}
                                                 onFollowupQuestionClicked={q => makeApiRequest(q)}
                                                 showFollowupQuestions={useSuggestFollowupQuestions && answers.length - 1 === index}
                                             />
@@ -229,10 +274,12 @@ const Chat = () => {
                                                 isStreaming={false}
                                                 key={index}
                                                 answer={answer[1]}
+                                                isSpeaking = {runningIndex === index}
                                                 isSelected={selectedAnswer === index && activeAnalysisPanelTab !== undefined}
                                                 onCitationClicked={c => onShowCitation(c, index)}
                                                 onThoughtProcessClicked={() => onToggleTab(AnalysisPanelTabs.ThoughtProcessTab, index)}
                                                 onSupportingContentClicked={() => onToggleTab(AnalysisPanelTabs.SupportingContentTab, index)}
+                                                onSpeechSynthesisClicked={() => startOrStopSynthesis(answer[2], index)}
                                                 onFollowupQuestionClicked={q => makeApiRequest(q)}
                                                 showFollowupQuestions={useSuggestFollowupQuestions && answers.length - 1 === index}
                                             />
@@ -325,6 +372,12 @@ const Chat = () => {
                         checked={useSuggestFollowupQuestions}
                         label="Suggest follow-up questions"
                         onChange={onUseSuggestFollowupQuestionsChange}
+                    />
+                    <Checkbox
+                        className={styles.chatSettingsSeparator}
+                        checked={useAutoSpeakAnswers}
+                        label="Automatically speak answers"
+                        onChange={onEnableAutoSpeakAnswersChange}
                     />
                     <Dropdown
                         className={styles.chatSettingsSeparator}

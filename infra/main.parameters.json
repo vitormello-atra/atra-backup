@@ -70,6 +70,12 @@
     },
     "useApplicationInsights": {
       "value": "${AZURE_USE_APPLICATION_INSIGHTS=false}"
+    },
+    "speechServiceName": {
+      "value": "${AZURE_SPEECH_SERVICE}"
+    },
+    "speechResourceGroupName": {
+      "value": "${AZURE_SPEECH_RESOURCE_GROUP}"
     }
   }
 }

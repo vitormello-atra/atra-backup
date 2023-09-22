@@ -1,6 +1,6 @@
-import { useState } from "react";
+import { SetStateAction, useState } from "react";
 import { Stack, TextField } from "@fluentui/react";
-import { Send28Filled } from "@fluentui/react-icons";
+import { Mic28Filled, Send28Filled } from "@fluentui/react-icons";
 
 import styles from "./QuestionInput.module.css";
 
@@ -11,8 +11,26 @@ interface Props {
     clearOnSend?: boolean;
 }
 
+var recognition: { continuous: boolean; lang: string; interimResults: boolean; maxAlternatives: number; start: () => void; onresult: (event: { results: { transcript: SetStateAction<string>; }[][]; }) => void; onend: () => void; stop: () => void; } | null = null;
+const SpeechRecognition =
+    (window as any).speechRecognition || (window as any).webkitSpeechRecognition;
+try{
+    recognition = new SpeechRecognition();    
+    if(recognition != null){
+        recognition.continuous = true;
+        recognition.lang = "en-US";
+        recognition.interimResults = true;
+        recognition.maxAlternatives = 1;
+    }
+}
+catch(err){
+    console.log("SpeechRecognition not supported");
+    recognition = null;
+}
+
 export const QuestionInput = ({ onSend, disabled, placeholder, clearOnSend }: Props) => {
     const [question, setQuestion] = useState<string>("");
+    const [isRecording, setIsRecording] = useState<boolean>(false);
 
     const sendQuestion = () => {
         if (disabled || !question.trim()) {
@@ -41,6 +59,33 @@ export const QuestionInput = ({ onSend, disabled, placeholder, clearOnSend }: Pr
         }
     };
 
+    const startRecording = () => {
+        if(recognition == null){
+            console.log("SpeechRecognition not supported");
+            return;
+        }  
+        console.log("start recording");
+        setIsRecording(true);
+        recognition.start();
+        recognition.onresult = (event: { results: { transcript: SetStateAction<string>; }[][]; }) => {
+            setQuestion(event.results[0][0].transcript);
+            setIsRecording(false);
+          };
+        recognition.onend = () => {
+            setIsRecording(false);
+        };
+    }
+    
+    const stopRecording = () => { 
+        if(recognition == null){
+            console.log("SpeechRecognition not supported");
+            return;
+        }
+        console.log("stop recording"); 
+        recognition.stop();
+        setIsRecording(false);
+    }
+
     const sendQuestionDisabled = disabled || !question.trim();
 
     return (
@@ -64,6 +109,28 @@ export const QuestionInput = ({ onSend, disabled, placeholder, clearOnSend }: Pr
                     <Send28Filled primaryFill="rgba(115, 118, 225, 1)" />
                 </div>
             </div>
+            {!isRecording && 
+            (<div className={styles.questionInputButtonsContainer}>
+                <div
+                    className={`${styles.questionAudioInputSendButton}`}
+                    aria-label="Ask question button"
+                    onClick={startRecording}
+                >
+                    <Mic28Filled primaryFill="rgba(115, 118, 225, 1)" />
+                    
+                </div>
+            </div>)}
+            {isRecording && 
+            (<div className={styles.questionInputButtonsContainer}>
+                <div
+                    className={`${styles.questionAudioInputSendButton}`}
+                    aria-label="Ask question button"
+                    onClick={stopRecording}
+                >
+                    <Mic28Filled primaryFill="rgba(250, 0, 0, 0.7)" />
+                    
+                </div>
+            </div>)}
         </Stack>
     );
 };

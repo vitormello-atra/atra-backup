@@ -11,10 +11,12 @@ import { AnswerIcon } from "./AnswerIcon";
 interface Props {
     answer: AskResponse;
     isSelected?: boolean;
+    isSpeaking?: boolean;
     isStreaming: boolean;
     onCitationClicked: (filePath: string) => void;
     onThoughtProcessClicked: () => void;
     onSupportingContentClicked: () => void;
+    onSpeechSynthesisClicked: () => void;
     onFollowupQuestionClicked?: (question: string) => void;
     showFollowupQuestions?: boolean;
 }
@@ -22,10 +24,12 @@ interface Props {
 export const Answer = ({
     answer,
     isSelected,
+    isSpeaking,
     isStreaming,
     onCitationClicked,
     onThoughtProcessClicked,
     onSupportingContentClicked,
+    onSpeechSynthesisClicked,
     onFollowupQuestionClicked,
     showFollowupQuestions
 }: Props) => {
@@ -55,6 +59,24 @@ export const Answer = ({
                             onClick={() => onSupportingContentClicked()}
                             disabled={!answer.data_points?.length}
                         />
+                        {isSpeaking &&
+                            (<IconButton
+                                style={{ color: "red" }}
+                                iconProps={{ iconName: "Volume3" }}
+                                title="Speak answer"
+                                ariaLabel="Speak answer"
+                                onClick={() => onSpeechSynthesisClicked()}
+                            />)
+                        }
+                        {!isSpeaking &&
+                            (<IconButton
+                                style={{ color: "black" }}
+                                iconProps={{ iconName: "Volume3" }}
+                                title="Speak answer"
+                                ariaLabel="Speak answer"
+                                onClick={() => onSpeechSynthesisClicked()}
+                            />)
+                        }
                     </div>
                 </Stack>
             </Stack.Item>

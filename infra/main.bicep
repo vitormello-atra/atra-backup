@@ -34,6 +34,12 @@ param openAiHost string // Set in main.parameters.json
 
 param openAiServiceName string = ''
 param openAiResourceGroupName string = ''
+
+param speechResourceGroupName string = ''
+param speechResourceGroupLocation string = location
+param speechServiceName string = ''
+param speechServiceSkuName string = 'S0'
+
 @description('Location for the OpenAI resource group')
 @allowed(['canadaeast', 'eastus', 'eastus2', 'francecentral', 'switzerlandnorth', 'uksouth', 'japaneast', 'northcentralus'])
 @metadata({
@@ -68,9 +74,15 @@ param principalId string = ''
 @description('Use Application Insights for monitoring and performance tracing')
 param useApplicationInsights bool = false
 
+@description('Use speech resource for reading out.')
+param useSpeechResource bool = true
+
 var abbrs = loadJsonContent('abbreviations.json')
 var resourceToken = toLower(uniqueString(subscription().id, environmentName, location))
 var tags = { 'azd-env-name': environmentName }
+var speechResourceGroupNameString = !empty(speechResourceGroupName) ? speechResourceGroupName : resourceGroup.name
+var speechServiceNameString = !empty(speechServiceName) ? speechServiceName : '${abbrs.cognitiveServicesSpeech}${resourceToken}'
+var speechResourceID = '${subscription().id}/resourceGroups/${speechResourceGroupNameString}/providers/Microsoft.CognitiveServices/accounts/${speechServiceNameString}'
 
 // Organize resources in a resource group
 resource resourceGroup 'Microsoft.Resources/resourceGroups@2021-04-01' = {
@@ -93,6 +105,10 @@ resource searchServiceResourceGroup 'Microsoft.Resources/resourceGroups@2021-04-
 
 resource storageResourceGroup 'Microsoft.Resources/resourceGroups@2021-04-01' existing = if (!empty(storageResourceGroupName)) {
   name: !empty(storageResourceGroupName) ? storageResourceGroupName : resourceGroup.name
+}
+
+resource speechResourceGroup 'Microsoft.Resources/resourceGroups@2021-04-01' existing = if (!empty(speechResourceGroupName)) {
+  name: speechResourceGroupNameString
 }
 
 // Monitor application with Azure Monitor
@@ -142,6 +158,8 @@ module backend 'core/host/appservice.bicep' = {
       AZURE_SEARCH_INDEX: searchIndexName
       AZURE_SEARCH_SERVICE: searchService.outputs.name
       APPLICATIONINSIGHTS_CONNECTION_STRING: useApplicationInsights ? monitoring.outputs.applicationInsightsConnectionString : ''
+      AZURE_SPEECH_RESOURCE_ID : useSpeechResource ? speechResourceID : ''
+      AZURE_SPEECH_REGION : useSpeechResource ? speechResourceGroupLocation : ''
       // Shared by all OpenAI deployments
       OPENAI_HOST: openAiHost
       AZURE_OPENAI_EMB_MODEL_NAME: embeddingModelName
@@ -207,6 +225,19 @@ module formRecognizer 'core/ai/cognitiveservices.bicep' = {
   }
 }
 
+module speechRecognizer 'core/ai/cognitiveservices.bicep' = if (useSpeechResource){
+  name: 'speechRecognizer'
+  scope: speechResourceGroup
+  params: {
+    name: speechServiceNameString
+    kind: 'SpeechServices'
+    location: speechResourceGroupLocation
+    tags: tags
+    sku: {
+      name: speechServiceSkuName
+    }
+  }
+}
 module searchService 'core/search/search-services.bicep' = {
   name: 'search-service'
   scope: searchServiceResourceGroup
@@ -267,6 +298,16 @@ module formRecognizerRoleUser 'core/security/role.bicep' = {
   params: {
     principalId: principalId
     roleDefinitionId: 'a97b65f3-24c7-4388-baec-2e87135dc908'
+    principalType: 'User'
+  }
+}
+
+module SpeechRoleUser 'core/security/role.bicep' = {
+  scope: speechResourceGroup
+  name: 'speech-role-user'
+  params: {
+    principalId: principalId
+    roleDefinitionId: 'f2dc8367-1007-4938-bd23-fe263f013447'
     principalType: 'User'
   }
 }
@@ -352,6 +393,16 @@ module searchRoleBackend 'core/security/role.bicep' = {
   }
 }
 
+module speechRoleBackend 'core/security/role.bicep' = {
+  scope: speechResourceGroup
+  name: 'speech-role-backend'
+  params: {
+    principalId: backend.outputs.identityPrincipalId
+    roleDefinitionId: 'f2dc8367-1007-4938-bd23-fe263f013447'
+    principalType: 'ServicePrincipal'
+  }
+}
+
 output AZURE_LOCATION string = location
 output AZURE_TENANT_ID string = tenant().tenantId
 output AZURE_RESOURCE_GROUP string = resourceGroup.name
@@ -368,6 +419,9 @@ output AZURE_OPENAI_EMB_DEPLOYMENT string = (openAiHost == 'azure') ? embeddingD
 // Used only with non-Azure OpenAI deployments
 output OPENAI_API_KEY string = (openAiHost == 'openai') ? openAiApiKey : ''
 output OPENAI_ORGANIZATION string = (openAiHost == 'openai') ? openAiApiOrganization : ''
+
+output AZURE_SPEECH_RESOURCE_ID string = useSpeechResource ? speechResourceID : ''
+output AZURE_SPEECH_REGION string = useSpeechResource ? speechResourceGroupLocation : ''
 
 output AZURE_FORMRECOGNIZER_SERVICE string = formRecognizer.outputs.name
 output AZURE_FORMRECOGNIZER_RESOURCE_GROUP string = formRecognizerResourceGroup.name
