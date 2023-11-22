@@ -40,6 +40,8 @@ urlFragment: azure-search-openai-demo
   - [Enabling Application Insights](#enabling-application-insights)
   - [Enabling authentication](#enabling-authentication)
   - [Enabling login and document level access control](#enabling-login-and-document-level-access-control)
+  - [Restricting network traffic](#restricting-network-traffic)
+  - [Enabling private endpoints](#enabling-private-endpoints)
   - [Enabling CORS for an alternate frontend](#enabling-cors-for-an-alternate-frontend)
 - [Using the app](#using-the-app)
 - [Running locally](#running-locally)
@@ -261,6 +263,43 @@ To then limit access to a specific set of users or groups, you can follow the st
 ### Enabling login and document level access control
 
 By default, the deployed Azure web app allows users to chat with all your indexed data. You can enable an optional login system using Azure Active Directory to restrict access to indexed data based on the logged in user. Enable the optional login and document level access control system by following [this guide](./LoginAndAclSetup.md).
+
+### Enabling private endpoints
+
+By default, the deployed application will allow connections from any IP address. To enable a [virtual network (VNet)](https://learn.microsoft.com/data-integration/vnet/what-is) for the resources and [private endpoint](https://docs.microsoft.com/azure/private-link/private-endpoint-overview) for the web app, set the `AZURE_USE_PRIVATE_ENDPOINT` variable to true before running `azd up`
+
+1. Run `azd env set AZURE_USE_PRIVATE_ENDPOINT true`
+1. Set `ALLOWED_IP` to the IP address that is running the `azd` commands:
+
+```console
+azd env set ALLOWED_IP 43.133.5.124
+```
+
+You can also use CIDR notation to specify an IP address range, for example to allow the IP addresses 43.133.5.0-43.133.5.255 (the /24 network):
+
+```console
+azd env set ALLOWED_IP 43.133.5.0/24
+```
+
+<details>
+<summary>How can I find my IP address?</summary>
+
+On Windows:
+
+```powershell
+Invoke-WebRequest -uri http://ifconfig.me/ip).Content
+```
+
+On Linux/Mac:
+
+```bash
+curl -s http://ifconfig.me/ip
+```
+</details>
+
+1. Run `azd up`
+
+If you find you are able to run `azd provision` but not able to run the prepdocs script or code deployment step, then you may have mis-configured the allowed IP address. Confirm that the allowed IP matches the one that is running the command, and try again.
 
 ### Enabling CORS for an alternate frontend
 

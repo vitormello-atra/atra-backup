@@ -94,6 +94,12 @@
     },
     "allowedOrigin": {
       "value": "${ALLOWED_ORIGIN}"
+    },
+    "allowedIp": {
+      "value": "${ALLOWED_IP}"
+    },
+    "usePrivateEndpoint": {
+      "value": "${AZURE_USE_PRIVATE_ENDPOINT=false}"
     }
   }
 }

@@ -19,13 +19,19 @@ param dnsEndpointType string = 'Standard'
 param kind string = 'StorageV2'
 param minimumTlsVersion string = 'TLS1_2'
 param supportsHttpsTrafficOnly bool = true
-param networkAcls object = {
-  bypass: 'AzureServices'
-  defaultAction: 'Allow'
-}
 @allowed([ 'Enabled', 'Disabled' ])
 param publicNetworkAccess string = 'Enabled'
 param sku object = { name: 'Standard_LRS' }
+
+param allowedIpRules array = []
+param networkAcls object = empty(allowedIpRules) ? {
+  bypass: 'AzureServices'
+  defaultAction: 'Allow'
+} : {
+  bypass: 'AzureServices'
+  ipRules: allowedIpRules
+  defaultAction: 'Deny'
+}
 
 resource storage 'Microsoft.Storage/storageAccounts@2022-05-01' = {
   name: name
@@ -60,5 +66,6 @@ resource storage 'Microsoft.Storage/storageAccounts@2022-05-01' = {
   }
 }
 
+output id string = storage.id
 output name string = storage.name
 output primaryEndpoints object = storage.properties.primaryEndpoints

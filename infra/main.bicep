@@ -21,7 +21,7 @@ param searchServiceName string = ''
 param searchServiceResourceGroupName string = ''
 param searchServiceLocation string = ''
 // The free tier does not support managed identity (required) or semantic search (optional)
-@allowed(['basic', 'standard', 'standard2', 'standard3', 'storage_optimized_l1', 'storage_optimized_l2'])
+@allowed([ 'basic', 'standard', 'standard2', 'standard3', 'storage_optimized_l1', 'storage_optimized_l2' ])
 param searchServiceSkuName string // Set in main.parameters.json
 param searchIndexName string // Set in main.parameters.json
 param searchQueryLanguage string // Set in main.parameters.json
@@ -33,13 +33,13 @@ param storageResourceGroupLocation string = location
 param storageContainerName string = 'content'
 param storageSkuName string // Set in main.parameters.json
 
-@allowed(['azure', 'openai'])
+@allowed([ 'azure', 'openai' ])
 param openAiHost string // Set in main.parameters.json
 
 param openAiServiceName string = ''
 param openAiResourceGroupName string = ''
 @description('Location for the OpenAI resource group')
-@allowed(['canadaeast', 'eastus', 'eastus2', 'francecentral', 'switzerlandnorth', 'uksouth', 'japaneast', 'northcentralus', 'australiaeast', 'swedencentral'])
+@allowed([ 'canadaeast', 'eastus', 'eastus2', 'francecentral', 'switzerlandnorth', 'uksouth', 'japaneast', 'northcentralus', 'australiaeast', 'swedencentral' ])
 @metadata({
   azd: {
     type: 'location'
@@ -76,11 +76,17 @@ param clientAppId string = ''
 // Used for optional CORS support for alternate frontends
 param allowedOrigin string = '' // should start with https://, shouldn't end with a /
 
+@description('IP or Subnet that is allowed access via the public network, must be used with usePrivateEndpoint')
+param allowedIp string = '' // For single host specific rules
+
 @description('Id of the user or app to assign application roles')
 param principalId string = ''
 
 @description('Use Application Insights for monitoring and performance tracing')
 param useApplicationInsights bool = false
+
+@description('Use network isolation')
+param usePrivateEndpoint bool = false
 
 var abbrs = loadJsonContent('abbreviations.json')
 var resourceToken = toLower(uniqueString(subscription().id, environmentName, location))
@@ -108,6 +114,9 @@ resource searchServiceResourceGroup 'Microsoft.Resources/resourceGroups@2021-04-
 resource storageResourceGroup 'Microsoft.Resources/resourceGroups@2021-04-01' existing = if (!empty(storageResourceGroupName)) {
   name: !empty(storageResourceGroupName) ? storageResourceGroupName : resourceGroup.name
 }
+
+var publicNetworkAccess = (usePrivateEndpoint && allowedIp == '') ? 'Disabled' : 'Enabled'
+var allowedIpRules = (allowedIp != '') ? [ { value: allowedIp } ] : []
 
 // Monitor application with Azure Monitor
 module monitoring './core/monitor/monitoring.bicep' = if (useApplicationInsights) {
@@ -152,7 +161,8 @@ module backend 'core/host/appservice.bicep' = {
     appCommandLine: 'python3 -m gunicorn main:app'
     scmDoBuildDuringDeployment: true
     managedIdentity: true
-    allowedOrigins: [allowedOrigin]
+    allowedOrigins: [ allowedOrigin ]
+    allowInboundNetworkRange: allowedIp
     appSettings: {
       AZURE_STORAGE_ACCOUNT: storage.outputs.name
       AZURE_STORAGE_CONTAINER: storageContainerName
@@ -181,6 +191,8 @@ module backend 'core/host/appservice.bicep' = {
       // CORS support, for frontends on other hosts
       ALLOWED_ORIGIN: allowedOrigin
     }
+    privateEndpointSubnetId: usePrivateEndpoint ? isolation.outputs.appSubnetId : ''
+    useVnet: usePrivateEndpoint
   }
 }
 
@@ -191,6 +203,8 @@ module openAi 'core/ai/cognitiveservices.bicep' = if (openAiHost == 'azure') {
     name: !empty(openAiServiceName) ? openAiServiceName : '${abbrs.cognitiveServicesAccounts}${resourceToken}'
     location: openAiResourceGroupLocation
     tags: tags
+    publicNetworkAccess: publicNetworkAccess
+    allowedIpRules: allowedIpRules
     sku: {
       name: openAiSkuName
     }
@@ -230,10 +244,12 @@ module formRecognizer 'core/ai/cognitiveservices.bicep' = {
     name: !empty(formRecognizerServiceName) ? formRecognizerServiceName : '${abbrs.cognitiveServicesFormRecognizer}${resourceToken}'
     kind: 'FormRecognizer'
     location: formRecognizerResourceGroupLocation
+    publicNetworkAccess: publicNetworkAccess
     tags: tags
     sku: {
       name: formRecognizerSkuName
     }
+    allowedIpRules: allowedIpRules
   }
 }
 
@@ -244,6 +260,7 @@ module searchService 'core/search/search-services.bicep' = {
     name: !empty(searchServiceName) ? searchServiceName : 'gptkb-${resourceToken}'
     location: !empty(searchServiceLocation) ? searchServiceLocation : location
     tags: tags
+    publicNetworkAccess: toLower(publicNetworkAccess) == 'enabled' ? 'enabled' : 'disabled'
     authOptions: {
       aadOrApiKey: {
         aadAuthFailureMode: 'http401WithBearerChallenge'
@@ -253,6 +270,7 @@ module searchService 'core/search/search-services.bicep' = {
       name: searchServiceSkuName
     }
     semanticSearch: 'free'
+    allowedIpRules: allowedIpRules
   }
 }
 
@@ -263,8 +281,8 @@ module storage 'core/storage/storage-account.bicep' = {
     name: !empty(storageAccountName) ? storageAccountName : '${abbrs.storageStorageAccounts}${resourceToken}'
     location: storageResourceGroupLocation
     tags: tags
+    publicNetworkAccess: publicNetworkAccess
     allowBlobPublicAccess: false
-    publicNetworkAccess: 'Enabled'
     sku: {
       name: storageSkuName
     }
@@ -278,6 +296,7 @@ module storage 'core/storage/storage-account.bicep' = {
         publicAccess: 'None'
       }
     ]
+    allowedIpRules: allowedIpRules
   }
 }
 
@@ -380,6 +399,24 @@ module searchRoleBackend 'core/security/role.bicep' = {
     principalId: backend.outputs.identityPrincipalId
     roleDefinitionId: '1407120a-92aa-4202-b7e9-c0e197c71c8f'
     principalType: 'ServicePrincipal'
+  }
+}
+
+module isolation 'network-isolation.bicep' = if (usePrivateEndpoint) {
+  name: 'networks'
+  scope: resourceGroup
+  params: {
+    location: location
+    tags: tags
+    resourceToken: resourceToken
+    vnetName: '${abbrs.virtualNetworks}${resourceToken}'
+    appServicePlanId: appServicePlan.outputs.id
+    appServicePlanName: appServicePlan.outputs.name
+    storageAccountId: storage.outputs.id
+    searchServiceId: searchService.outputs.id
+    searchServiceName: searchService.outputs.name
+    openAiId: openAi.outputs.id
+    formRecognizerId: formRecognizer.outputs.id
   }
 }
 

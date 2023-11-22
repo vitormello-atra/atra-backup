@@ -18,16 +18,7 @@ param encryptionWithCmk object = {
   'highDensity'
 ])
 param hostingMode string = 'default'
-param networkRuleSet object = {
-  bypass: 'None'
-  ipRules: []
-}
 param partitionCount int = 1
-@allowed([
-  'enabled'
-  'disabled'
-])
-param publicNetworkAccess string = 'enabled'
 param replicaCount int = 1
 @allowed([
   'disabled'
@@ -35,6 +26,17 @@ param replicaCount int = 1
   'standard'
 ])
 param semanticSearch string = 'disabled'
+@allowed([ 'enabled', 'disabled' ])
+param publicNetworkAccess string = 'enabled'
+
+param allowedIpRules array = []
+param networkRuleSet object = empty(allowedIpRules) ? {
+  bypass: 'None'
+  defaultAction: 'Allow'
+} : {
+  ipRules: allowedIpRules
+  defaultAction: 'Deny'
+}
 
 resource search 'Microsoft.Search/searchServices@2021-04-01-preview' = {
   name: name

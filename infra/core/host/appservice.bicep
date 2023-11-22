@@ -8,6 +8,8 @@ param applicationInsightsName string = ''
 param appServicePlanId string
 param keyVaultName string = ''
 param managedIdentity bool = !empty(keyVaultName)
+param privateEndpointSubnetId string = ''
+param useVnet bool = false
 
 // Runtime Properties
 @allowed([
@@ -36,33 +38,68 @@ param scmDoBuildDuringDeployment bool = false
 param use32BitWorkerProcess bool = false
 param ftpsState string = 'FtpsOnly'
 param healthCheckPath string = ''
+param allowInboundNetworkRange string = ''
+
+var coreConfig = {
+  linuxFxVersion: linuxFxVersion
+  alwaysOn: alwaysOn
+  ftpsState: ftpsState
+  appCommandLine: appCommandLine
+  numberOfWorkers: numberOfWorkers != -1 ? numberOfWorkers : null
+  minimumElasticInstanceCount: minimumElasticInstanceCount != -1 ? minimumElasticInstanceCount : null
+  minTlsVersion: '1.2'
+  use32BitWorkerProcess: use32BitWorkerProcess
+  functionAppScaleLimit: functionAppScaleLimit != -1 ? functionAppScaleLimit : null
+  healthCheckPath: healthCheckPath
+  cors: {
+    allowedOrigins: union([ 'https://portal.azure.com', 'https://ms.portal.azure.com' ], allowedOrigins)
+  }
+}
+
+var coreConfigWithNetworkRules = union(
+  !empty(allowInboundNetworkRange) ? {
+    ipSecurityRestrictions: [
+      {
+        // If allowInboundNetworkRange contains a slash, it's already CIDR notation, otherwise append /32
+        ipAddress: contains(allowInboundNetworkRange, '/') ? allowInboundNetworkRange : '${allowInboundNetworkRange}/32'
+        action: 'Allow'
+        tag: 'Default'
+        priority: 100
+        description: 'Allow specified network range'
+      }, {
+        ipAddress: 'Any'
+        action: 'Deny'
+        priority: 2147483647
+        name: 'Deny all'
+        description: 'Deny all access'
+      }
+    ]
+    ipSecurityRestrictionsDefaultAction: 'Deny'
+  } : {},
+  coreConfig
+)
+
+var coreProperties = {
+  serverFarmId: appServicePlanId
+  siteConfig: coreConfigWithNetworkRules
+  clientAffinityEnabled: clientAffinityEnabled
+  httpsOnly: true
+  vnetRouteAllEnabled: useVnet
+}
+
+var appServiceProperties = union(
+  !empty(privateEndpointSubnetId) ? {
+    virtualNetworkSubnetId: privateEndpointSubnetId
+  } : {},
+  coreProperties
+)
 
 resource appService 'Microsoft.Web/sites@2022-03-01' = {
   name: name
   location: location
   tags: tags
   kind: kind
-  properties: {
-    serverFarmId: appServicePlanId
-    siteConfig: {
-      linuxFxVersion: linuxFxVersion
-      alwaysOn: alwaysOn
-      ftpsState: ftpsState
-      minTlsVersion: '1.2'
-      appCommandLine: appCommandLine
-      numberOfWorkers: numberOfWorkers != -1 ? numberOfWorkers : null
-      minimumElasticInstanceCount: minimumElasticInstanceCount != -1 ? minimumElasticInstanceCount : null
-      use32BitWorkerProcess: use32BitWorkerProcess
-      functionAppScaleLimit: functionAppScaleLimit != -1 ? functionAppScaleLimit : null
-      healthCheckPath: healthCheckPath
-      cors: {
-        allowedOrigins: union([ 'https://portal.azure.com', 'https://ms.portal.azure.com' ], allowedOrigins)
-      }
-    }
-    clientAffinityEnabled: clientAffinityEnabled
-    httpsOnly: true
-  }
-
+  properties: appServiceProperties
   identity: { type: managedIdentity ? 'SystemAssigned' : 'None' }
 
   resource configLogs 'config' = {
@@ -99,7 +136,7 @@ module config 'appservice-appsettings.bicep' = if (!empty(appSettings)) {
         SCM_DO_BUILD_DURING_DEPLOYMENT: string(scmDoBuildDuringDeployment)
         ENABLE_ORYX_BUILD: string(enableOryxBuild)
       },
-      runtimeName == 'python' && appCommandLine == '' ? { PYTHON_ENABLE_GUNICORN_MULTIWORKERS: 'true'} : {},
+      runtimeName == 'python' && appCommandLine == '' ? { PYTHON_ENABLE_GUNICORN_MULTIWORKERS: 'true' } : {},
       !empty(applicationInsightsName) ? { APPLICATIONINSIGHTS_CONNECTION_STRING: applicationInsights.properties.ConnectionString } : {},
       !empty(keyVaultName) ? { AZURE_KEY_VAULT_ENDPOINT: keyVault.properties.vaultUri } : {})
   }
@@ -113,6 +150,7 @@ resource applicationInsights 'Microsoft.Insights/components@2020-02-02' existing
   name: applicationInsightsName
 }
 
+output id string = appService.id
 output identityPrincipalId string = managedIdentity ? appService.identity.principalId : ''
 output name string = appService.name
 output uri string = 'https://${appService.properties.defaultHostName}'
